@@ -1,8 +1,14 @@
 # mpdf
 
-Split a stack of invoices, delivery notes and POs into **one PDF per invoice**, each named by its invoice number. Everything runs in the browser — no files are uploaded anywhere.
+Free PDF tools that run entirely in the browser — no files are uploaded anywhere.
 
-## How it works
+- **Invoice sets** (`#invoices`) — split a stack of invoices, delivery notes and POs into one PDF per invoice, named by invoice number
+- **Split PDF** (`#split`) — custom ranges, fixed ranges (every N pages), extract all pages or selected pages; separate files or merged
+- **JPG to PDF** (`#images`) — JPG/PNG/WebP to PDF with reorder, rotate, page size (A4 / Letter / same as image), orientation, margin, merge or one PDF per image. Phone-photo rotation (EXIF) is respected; untouched JPG/PNG files are embedded without re-compressing.
+
+Every tool has a thumbnail grid and a zoomable preview, and accepts files dropped anywhere on the page.
+
+## Invoice sets — how it works
 1. Add PDFs (any of three arrangements):
    - **Separate files, in order** — Invoice 1, DN 1, PO 1, Invoice 2… (groups every N files)
    - **One file per type** — all invoices, all DNs, all POs (set N = page N of each file)
@@ -26,5 +32,7 @@ Static site, no build step. In Cloudflare: **Workers & Pages → Create → Page
 python3 -m http.server 8000
 ```
 then open http://localhost:8000
+
+Code: `js/shared.js` (viewer, downloads, tabs), `js/core.js` (pure logic, tested in Node), `js/app.js` / `js/split.js` / `js/images.js` (one per tool).
 
 Libraries (bundled in `vendor/`): pdf-lib 1.17.1, pdf.js 6.2, JSZip 3.10.

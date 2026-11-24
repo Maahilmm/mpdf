@@ -1,15 +1,15 @@
-import * as pdfjsLib from '../vendor/pdf.min.mjs';
+// Tool 1: invoice sets — group invoice + DN + PO and name each file by invoice number.
 import {
   MODES, suggestMode, buildSets, toLines, autoDetect, makeRule, applyRule, applyRegex,
   finalNames, safeName, buildSetPdf, loadPdfLib,
 } from './core.js';
+import {
+  $, ZOOM_ICON, fmtSize, plural, esc, isPdf, naturalCompare, openPdf, closePdf, renderPageCanvas, cloneCanvas,
+  lazy, pdfViewerItems, openViewer, saveBlob, onPageDrop, wireDropZone, wireCardGrid, moveItem,
+} from './shared.js';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdf.worker.min.mjs', import.meta.url).href;
-const CMAP_URL = new URL('../vendor/cmaps/', import.meta.url).href;
-
-const $ = (s) => document.querySelector(s);
 const state = {
-  files: [],          // {id, name, size, buf, pageCount, js (pdf.js doc), lib (pdf-lib doc)}
+  files: [],          // {id, name, size, buf, pageCount, js (pdf.js doc), lib (pdf-lib doc), thumb}
   mode: null,
   modeTouched: false,
   perSet: 3,
@@ -23,24 +23,13 @@ const state = {
 };
 let nextId = 1;
 const lineCache = new Map();
+const closeDoc = (f) => closePdf(f.js);
 
 /* ---------------- Files ---------------- */
 
-const input = $('#file-input');
-const drop = $('#drop');
-
-input.addEventListener('change', () => { addFiles([...input.files]); input.value = ''; });
-$('#add-more').addEventListener('click', () => input.click());
-['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
-['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
-drop.addEventListener('drop', (e) => addFiles([...e.dataTransfer.files]));
-// Allow dropping anywhere on the page
-let dragDepth = 0;
-window.addEventListener('dragenter', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { dragDepth++; document.body.classList.add('file-over'); } });
-window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('file-over'); } });
-window.addEventListener('drop', () => { dragDepth = 0; document.body.classList.remove('file-over'); }, true);
-window.addEventListener('dragover', (e) => e.preventDefault());
-window.addEventListener('drop', (e) => { if (!drop.contains(e.target) && e.dataTransfer?.files?.length) { e.preventDefault(); addFiles([...e.dataTransfer.files]); } });
+wireDropZone($('#drop'), $('#file-input'), (files) => addFiles(files));
+onPageDrop('invoices', (files) => addFiles(files));
+$('#add-more').addEventListener('click', () => $('#file-input').click());
 
 $('#clear').addEventListener('click', () => {
   state.files.forEach(closeDoc);
@@ -48,23 +37,22 @@ $('#clear').addEventListener('click', () => {
   refresh();
 });
 $('#sort-az').addEventListener('click', () => {
-  const coll = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-  state.files.sort((a, b) => coll.compare(a.name, b.name));
+  state.files.sort((a, b) => naturalCompare(a.name, b.name));
   refresh();
 });
 
 async function addFiles(list, at = null) {
-  const pdfs = list.filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+  const pdfs = list.filter(isPdf);
   if (!pdfs.length) return;
   const errors = [];
   const added = [];
   for (const f of pdfs) {
     try {
       const buf = await f.arrayBuffer();
-      const js = await pdfjsLib.getDocument({ data: new Uint8Array(buf.slice(0)), cMapUrl: CMAP_URL, cMapPacked: true, isEvalSupported: false }).promise;
+      const js = await openPdf(buf);
       added.push({ id: nextId++, name: f.name, size: f.size, buf, pageCount: js.numPages, js, lib: null });
     } catch (err) {
-      errors.push(`${f.name}: ${err?.name === 'PasswordException' ? 'password protected' : 'could not be read'}`);
+      errors.push(`${f.name}: ${err.message}`);
     }
   }
   if (at === null || at > state.files.length) state.files.push(...added);
@@ -73,9 +61,7 @@ async function addFiles(list, at = null) {
   refresh();
 }
 
-const ZOOM_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.8-4.8M10.5 7.5v6M7.5 10.5h6"/></svg>';
-
-function fmtSize(b) { return b >= 1048576 ? (b / 1048576).toFixed(2) + ' MB' : (b / 1024).toFixed(2) + ' KB'; }
+const observeThumb = lazy();
 
 function renderFileList() {
   const grid = $('#file-list');
@@ -90,7 +76,7 @@ function renderFileList() {
     card.tabIndex = 0;
     const tag = showTags ? `t${(i % k) % 3}` : '';
     card.innerHTML = `<span class="pos ${tag}">${i + 1}</span>
-      <span class="tip">${fmtSize(f.size)} · ${f.pageCount} page${f.pageCount === 1 ? '' : 's'}</span>
+      <span class="tip">${fmtSize(f.size)} · ${plural(f.pageCount, 'page')}</span>
       <span class="acts">
         <button type="button" data-a="rm" aria-label="Remove" title="Remove">✕</button>
         <button type="button" data-a="zoom" aria-label="Preview" title="Preview">${ZOOM_ICON}</button>
@@ -101,48 +87,22 @@ function renderFileList() {
       <span class="fname" title="${esc(f.name)}">${esc(f.name)}</span>`;
     const page = card.querySelector('.page');
     if (f.thumb) page.appendChild(cloneCanvas(f.thumb));
-    else { page.innerHTML = '<div class="spinner"></div>'; fileThumbObserver.observe(page); }
+    else {
+      page.innerHTML = '<div class="spinner"></div>';
+      observeThumb(page, (el) => renderPageCanvas(f.js, 0, 300).then((c) => { f.thumb = c; el.innerHTML = ''; el.appendChild(cloneCanvas(c)); }).catch(() => {}));
+    }
     grid.appendChild(card);
   });
   const pages = state.files.reduce((s, f) => s + f.pageCount, 0);
-  $('#file-summary').textContent = `${state.files.length} file${state.files.length === 1 ? '' : 's'} · ${pages} page${pages === 1 ? '' : 's'}`;
-}
-
-const fileThumbObserver = new IntersectionObserver((entries) => {
-  for (const e of entries) if (e.isIntersecting) {
-    fileThumbObserver.unobserve(e.target);
-    const i = +e.target.closest('.fcard').dataset.i;
-    const f = state.files[i];
-    if (!f) continue;
-    renderPageCanvas(f, 0, 300).then((c) => { f.thumb = c; if (e.target.isConnected) { e.target.innerHTML = ''; e.target.appendChild(cloneCanvas(c)); } }).catch(() => {});
-  }
-}, { rootMargin: '300px' });
-
-/** Render a page to a canvas whose height is `h` CSS px (sharp on hi-dpi). */
-async function renderPageCanvas(f, pageIdx, h) {
-  const page = await f.js.getPage(pageIdx + 1);
-  const base = page.getViewport({ scale: 1 });
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const vp = page.getViewport({ scale: (h * dpr) / base.height });
-  const c = document.createElement('canvas');
-  c.width = Math.round(vp.width); c.height = Math.round(vp.height);
-  await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
-  return c;
-}
-function cloneCanvas(src) {
-  const c = document.createElement('canvas');
-  c.width = src.width; c.height = src.height;
-  c.getContext('2d').drawImage(src, 0, 0);
-  return c;
+  $('#file-summary').textContent = `${plural(state.files.length, 'file')} · ${plural(pages, 'page')}`;
 }
 
 $('#file-list').addEventListener('click', (e) => {
   const card = e.target.closest('.fcard'); if (!card) return;
   const i = +card.dataset.i;
   const b = e.target.closest('button');
-  if (!b) { openFileViewer(i); return; }
+  if (!b || b.dataset.a === 'zoom') { openFileViewer(i); return; }
   const a = b.dataset.a;
-  if (a === 'zoom') { openFileViewer(i); return; }
   if (a === 'rm') { closeDoc(state.files[i]); state.files.splice(i, 1); }
   if (a === 'up' && i > 0) [state.files[i - 1], state.files[i]] = [state.files[i], state.files[i - 1]];
   if (a === 'down' && i < state.files.length - 1) [state.files[i + 1], state.files[i]] = [state.files[i], state.files[i + 1]];
@@ -151,154 +111,28 @@ $('#file-list').addEventListener('click', (e) => {
 $('#file-list').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target.classList.contains('fcard')) openFileViewer(+e.target.dataset.i);
 });
-let dragFrom = null;
-const clearDropMarks = () => document.querySelectorAll('.drop-before').forEach((x) => x.classList.remove('drop-before'));
-$('#file-list').addEventListener('dragstart', (e) => {
-  const card = e.target.closest('.fcard'); if (!card) return;
-  dragFrom = +card.dataset.i; card.classList.add('dragging');
-  e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', '');
+wireCardGrid($('#file-list'), {
+  move: (from, to) => { moveItem(state.files, from, to); refresh(); },
+  insertFiles: (files, at) => addFiles(files, at),
 });
-const isFileDrag = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
-$('#file-list').addEventListener('dragover', (e) => {
-  if (dragFrom === null && !isFileDrag(e)) return;
-  e.preventDefault(); e.stopPropagation();
-  clearDropMarks();
-  e.target.closest('.fcard')?.classList.add('drop-before');
-});
-$('#file-list').addEventListener('drop', (e) => {
-  if (dragFrom === null) {
-    if (!e.dataTransfer?.files?.length) return;
-    e.preventDefault(); e.stopPropagation();
-    clearDropMarks(); document.body.classList.remove('file-over');
-    const c = e.target.closest('.fcard');
-    addFiles([...e.dataTransfer.files], c ? +c.dataset.i : null);
-    return;
-  }
-  e.preventDefault(); e.stopPropagation();
-  const card = e.target.closest('.fcard');
-  let to = card ? +card.dataset.i : state.files.length;
-  const [m] = state.files.splice(dragFrom, 1);
-  if (to > dragFrom) to--;
-  state.files.splice(to, 0, m);
-  dragFrom = null; refresh();
-});
-$('#file-list').addEventListener('dragend', () => { dragFrom = null; clearDropMarks(); document.querySelectorAll('.dragging').forEach((x) => x.classList.remove('dragging')); });
 
-/* ---------------- Viewer (zoom) ---------------- */
-
-const viewer = { pages: [], zoom: 1, fit: true, token: 0, obs: null };
-const vBody = $('#viewer-body');
-
-function openFileViewer(i) {
+async function openFileViewer(i) {
   const f = state.files[i];
-  const pages = Array.from({ length: f.pageCount }, (_, p) => ({ file: i, page: p }));
-  openViewer(f.name, `${fmtSize(f.size)} · ${f.pageCount} page${f.pageCount === 1 ? '' : 's'}`, pages);
+  const items = await pdfViewerItems(Array.from({ length: f.pageCount }, (_, p) => ({ js: f.js, page: p })));
+  openViewer(f.name, `${fmtSize(f.size)} · ${plural(f.pageCount, 'page')}`, items);
 }
-function openSetViewer(i) {
+async function openSetViewer(i) {
   const s = state.sets[i];
-  openViewer(currentNames()[i], `Set ${i + 1} · ${s.length} page${s.length === 1 ? '' : 's'}`, s);
+  const items = await pdfViewerItems(s.map(({ file, page }) => ({ js: state.files[file].js, page, label: state.files[file].name })));
+  openViewer(currentNames()[i], `Set ${i + 1} · ${plural(s.length, 'page')}`, items);
 }
-
-async function openViewer(title, sub, pages) {
-  viewer.pages = pages; viewer.fit = true;
-  $('#viewer-title').textContent = title;
-  $('#viewer-sub').textContent = sub;
-  $('#viewer').hidden = false;
-  document.body.classList.add('no-scroll');
-  // base sizes (PDF points) for layout
-  viewer.sizes = await Promise.all(pages.map(async ({ file, page }) => {
-    const p = await state.files[file].js.getPage(page + 1);
-    const v = p.getViewport({ scale: 1 });
-    return { w: v.width, h: v.height };
-  }));
-  layoutViewer();
-  $('#viewer-close').focus();
-}
-
-function closeViewer() {
-  $('#viewer').hidden = true;
-  document.body.classList.remove('no-scroll');
-  viewer.token++; viewer.obs?.disconnect(); vBody.innerHTML = '';
-}
-
-function fitZoom() {
-  const maxW = Math.max(...viewer.sizes.map((s) => s.w));
-  return Math.max(0.25, Math.min(1.3, (vBody.clientWidth - 48) / maxW));
-}
-
-function layoutViewer(anchor) {
-  if (viewer.fit) viewer.zoom = fitZoom();
-  $('#viewer-zoom').textContent = Math.round(viewer.zoom * 100) + '%';
-  const token = ++viewer.token;
-  // keep the reading position when zooming
-  const rel = anchor ?? (vBody.scrollHeight ? vBody.scrollTop / vBody.scrollHeight : 0);
-  viewer.obs?.disconnect();
-  vBody.innerHTML = '';
-  viewer.obs = new IntersectionObserver((entries) => {
-    for (const e of entries) if (e.isIntersecting) { viewer.obs.unobserve(e.target); drawViewerPage(e.target, token); }
-  }, { root: vBody, rootMargin: '600px 0px' });
-  viewer.pages.forEach((p, k) => {
-    const s = viewer.sizes[k];
-    const d = document.createElement('div');
-    d.className = 'vpage';
-    d.dataset.k = k;
-    d.style.width = Math.round(s.w * viewer.zoom) + 'px';
-    d.style.height = Math.round(s.h * viewer.zoom) + 'px';
-    const label = viewer.pages.length > 1 ? `<span class="vlabel">${k + 1} / ${viewer.pages.length} · ${esc(state.files[p.file].name)}</span>` : '';
-    d.innerHTML = label;
-    vBody.appendChild(d);
-    viewer.obs.observe(d);
-  });
-  vBody.scrollTop = rel * vBody.scrollHeight;
-}
-
-async function drawViewerPage(el, token) {
-  const k = +el.dataset.k;
-  const { file, page } = viewer.pages[k];
-  try {
-    const c = await renderPageCanvas(state.files[file], page, viewer.sizes[k].h * viewer.zoom);
-    if (token !== viewer.token) return;
-    el.prepend(c);
-  } catch { /* ignore */ }
-}
-
-function setZoom(z) {
-  viewer.fit = false;
-  viewer.zoom = Math.max(0.25, Math.min(4, z));
-  layoutViewer();
-}
-document.querySelectorAll('.viewer-tools [data-z]').forEach((b) => b.addEventListener('click', () => {
-  const z = b.dataset.z;
-  if (z === 'in') setZoom(viewer.zoom * 1.25);
-  else if (z === 'out') setZoom(viewer.zoom / 1.25);
-  else { viewer.fit = true; layoutViewer(); }
-}));
-$('#viewer-close').addEventListener('click', closeViewer);
-$('#viewer').addEventListener('click', (e) => { if (e.target === vBody) closeViewer(); });
-document.addEventListener('keydown', (e) => {
-  if ($('#viewer').hidden) return;
-  if (e.key === 'Escape') closeViewer();
-  else if (e.key === '+' || e.key === '=') setZoom(viewer.zoom * 1.25);
-  else if (e.key === '-') setZoom(viewer.zoom / 1.25);
-  else if (e.key === '0') { viewer.fit = true; layoutViewer(); }
-});
-let wheelTimer, wheelZoom = null;
-vBody.addEventListener('wheel', (e) => {
-  if (!e.ctrlKey && !e.metaKey) return;
-  e.preventDefault();
-  wheelZoom = (wheelZoom ?? viewer.zoom) * (e.deltaY < 0 ? 1.1 : 1 / 1.1);
-  $('#viewer-zoom').textContent = Math.round(Math.max(0.25, Math.min(4, wheelZoom)) * 100) + '%';
-  clearTimeout(wheelTimer);
-  wheelTimer = setTimeout(() => { setZoom(wheelZoom); wheelZoom = null; }, 120);
-}, { passive: false });
-window.addEventListener('resize', () => { if (!$('#viewer').hidden && viewer.fit) layoutViewer(); });
 
 /* ---------------- Layout ---------------- */
 
 document.querySelectorAll('input[name=mode]').forEach((r) => r.addEventListener('change', () => { state.mode = r.value; state.modeTouched = true; refresh(); }));
 const perSetInput = $('#per-set');
 perSetInput.addEventListener('input', () => { const v = parseInt(perSetInput.value, 10); if (v >= 1) { state.perSet = Math.min(50, v); refresh(); } });
-document.querySelectorAll('.stepper button').forEach((b) => b.addEventListener('click', () => {
+document.querySelectorAll('#per-set-row .stepper button').forEach((b) => b.addEventListener('click', () => {
   state.perSet = Math.max(1, Math.min(50, state.perSet + +b.dataset.d)); perSetInput.value = state.perSet; refresh();
 }));
 
@@ -309,8 +143,8 @@ const hints = {
   pick: 'Best when auto-detect misses — works for any invoice layout with selectable text.',
   regex: 'For power users. Example: <code>Bill\\s*Ref\\s*:?\\s*(\\S+)</code>',
 };
-document.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => {
-  document.querySelectorAll('.seg button').forEach((x) => x.classList.toggle('on', x === b));
+document.querySelectorAll('#naming-seg button').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('#naming-seg button').forEach((x) => x.classList.toggle('on', x === b));
   state.method = b.dataset.method;
   $('#method-hint').innerHTML = hints[state.method];
   $('#pick-panel').hidden = state.method !== 'pick';
@@ -529,19 +363,12 @@ $('#download-zip').addEventListener('click', async () => {
   }
 });
 
-function saveBlob(blob, name) {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 30000);
-}
 
 /* ---------------- Refresh ---------------- */
 
 function refresh() {
   const has = state.files.length > 0;
-  document.body.classList.toggle('has-files', has);
+  $('#drop').classList.toggle('compact', has);
   $('#file-bar').hidden = !has;
   ['#step-layout', '#step-names', '#step-dl'].forEach((s) => ($(s).hidden = !has));
   if (!has) { $('#file-list').innerHTML = ''; return; }
@@ -570,5 +397,3 @@ function refresh() {
   detectAll();
 }
 
-function closeDoc(f) { try { (f.js?.loadingTask || f.js)?.destroy?.(); } catch { /* ignore */ } }
-function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }

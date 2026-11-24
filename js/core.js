@@ -215,3 +215,157 @@ export async function buildSetPdf(srcDocs, set) {
 export async function loadPdfLib(bytes) {
   return PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
 }
+
+/* ---------- Split PDF ---------- */
+
+/** Parse "1,3,5-8, 10-" into sorted unique 0-based page indexes. */
+export function parsePageList(str, n) {
+  const pages = new Set();
+  const errors = [];
+  for (const raw of String(str || '').split(/[,;\s]+/).filter(Boolean)) {
+    const m = raw.match(/^(\d*)\s*[-–]\s*(\d*)$/);
+    let a, b;
+    if (m && (m[1] || m[2])) { a = m[1] ? +m[1] : 1; b = m[2] ? +m[2] : n; }
+    else if (/^\d+$/.test(raw)) { a = b = +raw; }
+    else { errors.push(`“${raw}” isn't a page or range`); continue; }
+    if (a > b) [a, b] = [b, a];
+    if (a < 1 || b > n) { errors.push(`${raw} is outside 1–${n}`); continue; }
+    for (let p = a; p <= b; p++) pages.add(p - 1);
+  }
+  return { pages: [...pages].sort((x, y) => x - y), errors };
+}
+
+/** Compact label for a list of 0-based pages: [0,1,2,5] -> "1-3,6" */
+export function pagesLabel(pages) {
+  const out = [];
+  for (let i = 0; i < pages.length; i++) {
+    let j = i;
+    while (j + 1 < pages.length && pages[j + 1] === pages[j] + 1) j++;
+    out.push(i === j ? `${pages[i] + 1}` : `${pages[i] + 1}-${pages[j] + 1}`);
+    i = j;
+  }
+  return out.join(',');
+}
+
+/**
+ * Work out the files a split produces.
+ * opts: { mode: 'range'|'extract', rangeType: 'custom'|'fixed', ranges: [{from,to}],
+ *         every, extractType: 'all'|'select', select: '1,3-5', merge }
+ * Returns { outputs: [{label, pages}], errors }
+ */
+export function computeSplit(n, opts) {
+  const errors = [];
+  let groups = [];
+  if (opts.mode === 'range') {
+    if (opts.rangeType === 'fixed') {
+      const k = Math.max(1, Math.floor(opts.every) || 1);
+      for (let i = 0; i < n; i += k) groups.push(range(i, Math.min(n, i + k) - 1));
+    } else {
+      (opts.ranges || []).forEach((r, idx) => {
+        let a = Math.floor(+r.from), b = Math.floor(+r.to);
+        if (!a || !b) { errors.push(`Range ${idx + 1} is incomplete`); return; }
+        if (a > b) [a, b] = [b, a];
+        if (a < 1 || b > n) { errors.push(`Range ${idx + 1} (${a}–${b}) is outside 1–${n}`); return; }
+        groups.push(range(a - 1, b - 1));
+      });
+    }
+  } else if (opts.extractType === 'select') {
+    const { pages, errors: e } = parsePageList(opts.select, n);
+    errors.push(...e);
+    groups = pages.map((p) => [p]);
+  } else {
+    groups = range(0, n - 1).map((p) => [p]);
+  }
+  if (opts.merge && groups.length > 1) groups = [groups.flat()];
+  return { outputs: groups.map((pages) => ({ label: pagesLabel(pages), pages })), errors };
+}
+
+const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+
+/** Build one PDF from pages of a single pdf-lib document. */
+export async function buildPagesPdf(srcDoc, pages) {
+  const out = await PDFDocument.create();
+  const copied = await out.copyPages(srcDoc, pages);
+  copied.forEach((p) => out.addPage(p));
+  return out.save();
+}
+
+/* ---------- Images to PDF ---------- */
+
+export const PAGE_SIZES = { a4: [595.28, 841.89], letter: [612, 792] };
+export const MARGINS = { none: 0, small: 20, big: 50 };
+
+/**
+ * Where an image of iw×ih (pixels) goes on the page.
+ * opts: { size: 'fit'|'a4'|'letter', orientation: 'auto'|'portrait'|'landscape', margin: 'none'|'small'|'big' }
+ * Returns { pw, ph, x, y, w, h } in PDF points (y measured from the bottom).
+ */
+export function layoutImage(iw, ih, opts) {
+  const m = MARGINS[opts.margin] ?? 0;
+  if (opts.size === 'fit' || !PAGE_SIZES[opts.size]) {
+    // Page takes the image's own size (96 dpi), plus margins
+    const w = iw * 0.75, h = ih * 0.75;
+    return { pw: w + 2 * m, ph: h + 2 * m, x: m, y: m, w, h };
+  }
+  let [pw, ph] = PAGE_SIZES[opts.size];
+  const landscape = opts.orientation === 'landscape' || (opts.orientation !== 'portrait' && iw > ih);
+  if (landscape) [pw, ph] = [ph, pw];
+  const s = Math.min((pw - 2 * m) / iw, (ph - 2 * m) / ih);
+  const w = iw * s, h = ih * s;
+  return { pw, ph, x: (pw - w) / 2, y: (ph - h) / 2, w, h };
+}
+
+/** JPEG EXIF orientation (1–8), 1 if none. */
+export function jpegOrientation(bytes) {
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (v.byteLength < 4 || v.getUint16(0) !== 0xffd8) return 1;
+  let off = 2;
+  while (off + 4 < v.byteLength) {
+    const marker = v.getUint16(off);
+    const len = v.getUint16(off + 2);
+    if (marker === 0xffe1 && v.getUint32(off + 4) === 0x45786966) {
+      const t = off + 10;
+      const le = v.getUint16(t) === 0x4949;
+      const ifd = t + v.getUint32(t + 4, le);
+      const count = v.getUint16(ifd, le);
+      for (let i = 0; i < count; i++) {
+        const e = ifd + 2 + i * 12;
+        if (e + 10 > v.byteLength) break;
+        if (v.getUint16(e, le) === 0x0112) return v.getUint16(e + 8, le) || 1;
+      }
+      return 1;
+    }
+    if ((marker & 0xff00) !== 0xff00 || marker === 0xffda) break;
+    off += 2 + len;
+  }
+  return 1;
+}
+
+/** 'jpg' | 'png' | 'other' from file bytes. */
+export function imageKind(bytes) {
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) return 'jpg';
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'png';
+  return 'other';
+}
+
+/**
+ * Build PDF(s) from prepared images.
+ * images: [{ kind: 'jpg'|'png', bytes, w, h }] (already upright), opts as layoutImage.
+ * Returns one PDF if merge, else one per image: [Uint8Array]
+ */
+export async function imagesToPdfs(images, opts, onEach) {
+  const outs = [];
+  let doc = opts.merge ? await PDFDocument.create() : null;
+  for (let i = 0; i < images.length; i++) {
+    const im = images[i];
+    if (!opts.merge) doc = await PDFDocument.create();
+    const emb = im.kind === 'png' ? await doc.embedPng(im.bytes) : await doc.embedJpg(im.bytes);
+    const L = layoutImage(im.w, im.h, opts);
+    const page = doc.addPage([L.pw, L.ph]);
+    page.drawImage(emb, { x: L.x, y: L.y, width: L.w, height: L.h });
+    if (!opts.merge) outs.push(await doc.save());
+    onEach?.(i);
+  }
+  if (opts.merge) outs.push(await doc.save());
+  return outs;
+}
