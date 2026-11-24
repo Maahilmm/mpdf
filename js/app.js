@@ -35,6 +35,10 @@ $('#add-more').addEventListener('click', () => input.click());
 ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
 drop.addEventListener('drop', (e) => addFiles([...e.dataTransfer.files]));
 // Allow dropping anywhere on the page
+let dragDepth = 0;
+window.addEventListener('dragenter', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { dragDepth++; document.body.classList.add('file-over'); } });
+window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('file-over'); } });
+window.addEventListener('drop', () => { dragDepth = 0; document.body.classList.remove('file-over'); }, true);
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => { if (!drop.contains(e.target) && e.dataTransfer?.files?.length) { e.preventDefault(); addFiles([...e.dataTransfer.files]); } });
 
@@ -49,63 +53,245 @@ $('#sort-az').addEventListener('click', () => {
   refresh();
 });
 
-async function addFiles(list) {
+async function addFiles(list, at = null) {
   const pdfs = list.filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
   if (!pdfs.length) return;
   const errors = [];
+  const added = [];
   for (const f of pdfs) {
     try {
       const buf = await f.arrayBuffer();
       const js = await pdfjsLib.getDocument({ data: new Uint8Array(buf.slice(0)), cMapUrl: CMAP_URL, cMapPacked: true, isEvalSupported: false }).promise;
-      state.files.push({ id: nextId++, name: f.name, size: f.size, buf, pageCount: js.numPages, js, lib: null });
+      added.push({ id: nextId++, name: f.name, size: f.size, buf, pageCount: js.numPages, js, lib: null });
     } catch (err) {
       errors.push(`${f.name}: ${err?.name === 'PasswordException' ? 'password protected' : 'could not be read'}`);
     }
   }
+  if (at === null || at > state.files.length) state.files.push(...added);
+  else state.files.splice(at, 0, ...added);
   if (errors.length) alert('Skipped:\n' + errors.join('\n'));
   refresh();
 }
 
+const ZOOM_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.8-4.8M10.5 7.5v6M7.5 10.5h6"/></svg>';
+
+function fmtSize(b) { return b >= 1048576 ? (b / 1048576).toFixed(2) + ' MB' : (b / 1024).toFixed(2) + ' KB'; }
+
 function renderFileList() {
-  const ul = $('#file-list');
-  ul.innerHTML = '';
+  const grid = $('#file-list');
+  grid.innerHTML = '';
   const showTags = state.mode === MODES.FILES || state.mode === MODES.TYPES;
   const k = state.mode === MODES.TYPES ? state.files.length : state.perSet;
   state.files.forEach((f, i) => {
-    const li = document.createElement('li');
-    li.draggable = true;
-    li.dataset.i = i;
+    const card = document.createElement('div');
+    card.className = 'fcard';
+    card.draggable = true;
+    card.dataset.i = i;
+    card.tabIndex = 0;
     const tag = showTags ? `t${(i % k) % 3}` : '';
-    li.innerHTML = `<span class="idx" title="Drag to reorder">${i + 1}</span><span class="tag ${tag}"></span>
-      <span class="name" title="${esc(f.name)}">${esc(f.name)}</span>
-      <span class="meta">${f.pageCount} pg</span>
-      <span class="ops"><button type="button" data-a="up" aria-label="Move up">↑</button><button type="button" data-a="down" aria-label="Move down">↓</button><button type="button" data-a="rm" aria-label="Remove">✕</button></span>`;
-    ul.appendChild(li);
+    card.innerHTML = `<span class="pos ${tag}">${i + 1}</span>
+      <span class="tip">${fmtSize(f.size)} · ${f.pageCount} page${f.pageCount === 1 ? '' : 's'}</span>
+      <span class="acts">
+        <button type="button" data-a="rm" aria-label="Remove" title="Remove">✕</button>
+        <button type="button" data-a="zoom" aria-label="Preview" title="Preview">${ZOOM_ICON}</button>
+        <button type="button" data-a="up" aria-label="Move earlier" title="Move earlier">←</button>
+        <button type="button" data-a="down" aria-label="Move later" title="Move later">→</button>
+      </span>
+      <div class="page"></div>
+      <span class="fname" title="${esc(f.name)}">${esc(f.name)}</span>`;
+    const page = card.querySelector('.page');
+    if (f.thumb) page.appendChild(cloneCanvas(f.thumb));
+    else { page.innerHTML = '<div class="spinner"></div>'; fileThumbObserver.observe(page); }
+    grid.appendChild(card);
   });
   const pages = state.files.reduce((s, f) => s + f.pageCount, 0);
   $('#file-summary').textContent = `${state.files.length} file${state.files.length === 1 ? '' : 's'} · ${pages} page${pages === 1 ? '' : 's'}`;
 }
 
+const fileThumbObserver = new IntersectionObserver((entries) => {
+  for (const e of entries) if (e.isIntersecting) {
+    fileThumbObserver.unobserve(e.target);
+    const i = +e.target.closest('.fcard').dataset.i;
+    const f = state.files[i];
+    if (!f) continue;
+    renderPageCanvas(f, 0, 300).then((c) => { f.thumb = c; if (e.target.isConnected) { e.target.innerHTML = ''; e.target.appendChild(cloneCanvas(c)); } }).catch(() => {});
+  }
+}, { rootMargin: '300px' });
+
+/** Render a page to a canvas whose height is `h` CSS px (sharp on hi-dpi). */
+async function renderPageCanvas(f, pageIdx, h) {
+  const page = await f.js.getPage(pageIdx + 1);
+  const base = page.getViewport({ scale: 1 });
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const vp = page.getViewport({ scale: (h * dpr) / base.height });
+  const c = document.createElement('canvas');
+  c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+  await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+  return c;
+}
+function cloneCanvas(src) {
+  const c = document.createElement('canvas');
+  c.width = src.width; c.height = src.height;
+  c.getContext('2d').drawImage(src, 0, 0);
+  return c;
+}
+
 $('#file-list').addEventListener('click', (e) => {
-  const b = e.target.closest('button'); if (!b) return;
-  const i = +b.closest('li').dataset.i;
+  const card = e.target.closest('.fcard'); if (!card) return;
+  const i = +card.dataset.i;
+  const b = e.target.closest('button');
+  if (!b) { openFileViewer(i); return; }
   const a = b.dataset.a;
+  if (a === 'zoom') { openFileViewer(i); return; }
   if (a === 'rm') { closeDoc(state.files[i]); state.files.splice(i, 1); }
   if (a === 'up' && i > 0) [state.files[i - 1], state.files[i]] = [state.files[i], state.files[i - 1]];
   if (a === 'down' && i < state.files.length - 1) [state.files[i + 1], state.files[i]] = [state.files[i], state.files[i + 1]];
   refresh();
 });
+$('#file-list').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.classList.contains('fcard')) openFileViewer(+e.target.dataset.i);
+});
 let dragFrom = null;
-$('#file-list').addEventListener('dragstart', (e) => { const li = e.target.closest('li'); dragFrom = +li.dataset.i; li.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', ''); });
-$('#file-list').addEventListener('dragover', (e) => { if (dragFrom === null) return; e.preventDefault(); e.stopPropagation(); document.querySelectorAll('.drop-target').forEach((x) => x.classList.remove('drop-target')); e.target.closest('li')?.classList.add('drop-target'); });
-$('#file-list').addEventListener('drop', (e) => {
-  if (dragFrom === null) return;
+const clearDropMarks = () => document.querySelectorAll('.drop-before').forEach((x) => x.classList.remove('drop-before'));
+$('#file-list').addEventListener('dragstart', (e) => {
+  const card = e.target.closest('.fcard'); if (!card) return;
+  dragFrom = +card.dataset.i; card.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', '');
+});
+const isFileDrag = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+$('#file-list').addEventListener('dragover', (e) => {
+  if (dragFrom === null && !isFileDrag(e)) return;
   e.preventDefault(); e.stopPropagation();
-  const li = e.target.closest('li');
-  if (li) { const to = +li.dataset.i; const [m] = state.files.splice(dragFrom, 1); state.files.splice(to, 0, m); }
+  clearDropMarks();
+  e.target.closest('.fcard')?.classList.add('drop-before');
+});
+$('#file-list').addEventListener('drop', (e) => {
+  if (dragFrom === null) {
+    if (!e.dataTransfer?.files?.length) return;
+    e.preventDefault(); e.stopPropagation();
+    clearDropMarks(); document.body.classList.remove('file-over');
+    const c = e.target.closest('.fcard');
+    addFiles([...e.dataTransfer.files], c ? +c.dataset.i : null);
+    return;
+  }
+  e.preventDefault(); e.stopPropagation();
+  const card = e.target.closest('.fcard');
+  let to = card ? +card.dataset.i : state.files.length;
+  const [m] = state.files.splice(dragFrom, 1);
+  if (to > dragFrom) to--;
+  state.files.splice(to, 0, m);
   dragFrom = null; refresh();
 });
-$('#file-list').addEventListener('dragend', () => { dragFrom = null; renderFileList(); });
+$('#file-list').addEventListener('dragend', () => { dragFrom = null; clearDropMarks(); document.querySelectorAll('.dragging').forEach((x) => x.classList.remove('dragging')); });
+
+/* ---------------- Viewer (zoom) ---------------- */
+
+const viewer = { pages: [], zoom: 1, fit: true, token: 0, obs: null };
+const vBody = $('#viewer-body');
+
+function openFileViewer(i) {
+  const f = state.files[i];
+  const pages = Array.from({ length: f.pageCount }, (_, p) => ({ file: i, page: p }));
+  openViewer(f.name, `${fmtSize(f.size)} · ${f.pageCount} page${f.pageCount === 1 ? '' : 's'}`, pages);
+}
+function openSetViewer(i) {
+  const s = state.sets[i];
+  openViewer(currentNames()[i], `Set ${i + 1} · ${s.length} page${s.length === 1 ? '' : 's'}`, s);
+}
+
+async function openViewer(title, sub, pages) {
+  viewer.pages = pages; viewer.fit = true;
+  $('#viewer-title').textContent = title;
+  $('#viewer-sub').textContent = sub;
+  $('#viewer').hidden = false;
+  document.body.classList.add('no-scroll');
+  // base sizes (PDF points) for layout
+  viewer.sizes = await Promise.all(pages.map(async ({ file, page }) => {
+    const p = await state.files[file].js.getPage(page + 1);
+    const v = p.getViewport({ scale: 1 });
+    return { w: v.width, h: v.height };
+  }));
+  layoutViewer();
+  $('#viewer-close').focus();
+}
+
+function closeViewer() {
+  $('#viewer').hidden = true;
+  document.body.classList.remove('no-scroll');
+  viewer.token++; viewer.obs?.disconnect(); vBody.innerHTML = '';
+}
+
+function fitZoom() {
+  const maxW = Math.max(...viewer.sizes.map((s) => s.w));
+  return Math.max(0.25, Math.min(1.3, (vBody.clientWidth - 48) / maxW));
+}
+
+function layoutViewer(anchor) {
+  if (viewer.fit) viewer.zoom = fitZoom();
+  $('#viewer-zoom').textContent = Math.round(viewer.zoom * 100) + '%';
+  const token = ++viewer.token;
+  // keep the reading position when zooming
+  const rel = anchor ?? (vBody.scrollHeight ? vBody.scrollTop / vBody.scrollHeight : 0);
+  viewer.obs?.disconnect();
+  vBody.innerHTML = '';
+  viewer.obs = new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) { viewer.obs.unobserve(e.target); drawViewerPage(e.target, token); }
+  }, { root: vBody, rootMargin: '600px 0px' });
+  viewer.pages.forEach((p, k) => {
+    const s = viewer.sizes[k];
+    const d = document.createElement('div');
+    d.className = 'vpage';
+    d.dataset.k = k;
+    d.style.width = Math.round(s.w * viewer.zoom) + 'px';
+    d.style.height = Math.round(s.h * viewer.zoom) + 'px';
+    const label = viewer.pages.length > 1 ? `<span class="vlabel">${k + 1} / ${viewer.pages.length} · ${esc(state.files[p.file].name)}</span>` : '';
+    d.innerHTML = label;
+    vBody.appendChild(d);
+    viewer.obs.observe(d);
+  });
+  vBody.scrollTop = rel * vBody.scrollHeight;
+}
+
+async function drawViewerPage(el, token) {
+  const k = +el.dataset.k;
+  const { file, page } = viewer.pages[k];
+  try {
+    const c = await renderPageCanvas(state.files[file], page, viewer.sizes[k].h * viewer.zoom);
+    if (token !== viewer.token) return;
+    el.prepend(c);
+  } catch { /* ignore */ }
+}
+
+function setZoom(z) {
+  viewer.fit = false;
+  viewer.zoom = Math.max(0.25, Math.min(4, z));
+  layoutViewer();
+}
+document.querySelectorAll('.viewer-tools [data-z]').forEach((b) => b.addEventListener('click', () => {
+  const z = b.dataset.z;
+  if (z === 'in') setZoom(viewer.zoom * 1.25);
+  else if (z === 'out') setZoom(viewer.zoom / 1.25);
+  else { viewer.fit = true; layoutViewer(); }
+}));
+$('#viewer-close').addEventListener('click', closeViewer);
+$('#viewer').addEventListener('click', (e) => { if (e.target === vBody) closeViewer(); });
+document.addEventListener('keydown', (e) => {
+  if ($('#viewer').hidden) return;
+  if (e.key === 'Escape') closeViewer();
+  else if (e.key === '+' || e.key === '=') setZoom(viewer.zoom * 1.25);
+  else if (e.key === '-') setZoom(viewer.zoom / 1.25);
+  else if (e.key === '0') { viewer.fit = true; layoutViewer(); }
+});
+let wheelTimer, wheelZoom = null;
+vBody.addEventListener('wheel', (e) => {
+  if (!e.ctrlKey && !e.metaKey) return;
+  e.preventDefault();
+  wheelZoom = (wheelZoom ?? viewer.zoom) * (e.deltaY < 0 ? 1.1 : 1 / 1.1);
+  $('#viewer-zoom').textContent = Math.round(Math.max(0.25, Math.min(4, wheelZoom)) * 100) + '%';
+  clearTimeout(wheelTimer);
+  wheelTimer = setTimeout(() => { setZoom(wheelZoom); wheelZoom = null; }, 120);
+}, { passive: false });
+window.addEventListener('resize', () => { if (!$('#viewer').hidden && viewer.fit) layoutViewer(); });
 
 /* ---------------- Layout ---------------- */
 
@@ -245,7 +431,7 @@ function renderRows() {
     tr.dataset.i = i;
     const pageDots = s.slice(0, 12).map((p) => `<i class="${state.mode === MODES.TYPES ? 't' + (p.file % 3) : ''}" title="${esc(state.files[p.file].name)} p${p.page + 1}"></i>`).join('');
     tr.innerHTML = `<td>${i + 1}</td>
-      <td><div class="thumb" data-set="${i}"></div></td>
+      <td><div class="thumb" data-set="${i}" title="Preview this set"></div></td>
       <td><div class="name-cell"><span class="badge"></span><input type="text" spellcheck="false" aria-label="File name for set ${i + 1}"><span class="ext">.pdf</span></div></td>
       <td><span class="pages">${pageDots}</span> ${s.length}</td>
       <td><button type="button" class="dl-one" title="Download this file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg></button></td>`;
@@ -261,6 +447,8 @@ $('#rows').addEventListener('input', (e) => {
   updateBadges(); updateStats();
 });
 $('#rows').addEventListener('click', async (e) => {
+  const th = e.target.closest('.thumb');
+  if (th) { openSetViewer(+th.dataset.set); return; }
   const b = e.target.closest('.dl-one'); if (!b) return;
   const i = +b.closest('tr').dataset.i;
   b.disabled = true;
