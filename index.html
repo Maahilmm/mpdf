@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>mpdf — split invoice bundles into one PDF per invoice</title>
+  <meta name="description" content="Drop in your invoices, delivery notes and POs. Get back one PDF per set, named by invoice number. Runs entirely in your browser.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="./"><span class="mark">m</span>pdf</a>
+    <span class="privacy"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Z"/></svg>Files never leave your device</span>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1>One stack in.<br><em>One PDF per invoice</em> out.</h1>
+      <p>Drop in your invoices, delivery notes and POs. mpdf groups each invoice with its paperwork and names every file by its invoice number.</p>
+    </section>
+
+    <!-- STEP 1 -->
+    <section class="step" id="step-files">
+      <div class="step-head"><span class="num">1</span><h2>Add your PDFs</h2></div>
+      <label class="drop" id="drop">
+        <input type="file" id="file-input" accept="application/pdf,.pdf" multiple hidden>
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M14 6h14l10 10v26H14z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><path d="M28 6v10h10M26 24v12m-5-5 5 5 5-5" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <strong>Drop PDFs here</strong>
+        <span>or click to choose files · keep them in order</span>
+      </label>
+      <div class="file-bar" id="file-bar" hidden>
+        <span id="file-summary"></span>
+        <div class="bar-actions">
+          <button type="button" class="ghost" id="sort-az">Sort A→Z</button>
+          <button type="button" class="ghost" id="add-more">Add more</button>
+          <button type="button" class="ghost danger" id="clear">Clear</button>
+        </div>
+      </div>
+      <ol class="file-list" id="file-list"></ol>
+    </section>
+
+    <!-- STEP 2 -->
+    <section class="step" id="step-layout" hidden>
+      <div class="step-head"><span class="num">2</span><h2>How are they arranged?</h2></div>
+      <div class="modes" role="radiogroup">
+        <label class="mode">
+          <input type="radio" name="mode" value="files">
+          <span class="mode-body">
+            <span class="diagram"><i class="d-inv"></i><i class="d-dn"></i><i class="d-po"></i><i class="d-inv"></i><i class="d-dn"></i><i class="d-po"></i><b>…</b></span>
+            <strong>Separate files, in order</strong>
+            <small>Invoice 1, DN 1, PO 1, Invoice 2, DN 2…</small>
+          </span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="mode" value="types">
+          <span class="mode-body">
+            <span class="diagram stack"><i class="d-inv"></i><i class="d-dn"></i><i class="d-po"></i></span>
+            <strong>One file per type</strong>
+            <small>All invoices · all DNs · all POs (1 page each)</small>
+          </span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="mode" value="pages">
+          <span class="mode-body">
+            <span class="diagram book"><i class="d-inv"></i><i class="d-dn"></i><i class="d-po"></i><i class="d-inv"></i><i class="d-dn"></i><i class="d-po"></i><b>…</b></span>
+            <strong>One combined PDF</strong>
+            <small>Every set is a fixed number of pages</small>
+          </span>
+        </label>
+      </div>
+      <div class="per-set" id="per-set-row">
+        <label for="per-set" id="per-set-label">Documents in each set</label>
+        <div class="stepper">
+          <button type="button" data-d="-1" aria-label="Fewer">−</button>
+          <input id="per-set" type="number" min="1" max="50" value="3" inputmode="numeric">
+          <button type="button" data-d="1" aria-label="More">+</button>
+        </div>
+        <span class="hint" id="per-set-hint">Invoice + delivery note + PO = 3</span>
+      </div>
+      <div class="warn" id="warnings" hidden></div>
+    </section>
+
+    <!-- STEP 3 -->
+    <section class="step" id="step-names" hidden>
+      <div class="step-head"><span class="num">3</span><h2>Name each file by invoice number</h2></div>
+      <div class="naming">
+        <div class="seg" role="tablist">
+          <button type="button" data-method="auto" class="on">Auto-detect</button>
+          <button type="button" data-method="pick">Point to it</button>
+          <button type="button" data-method="regex">Pattern</button>
+        </div>
+        <p class="hint" id="method-hint">Looks for “Invoice No”, “Invoice #”, “INV” and similar on the first page of each set.</p>
+        <div id="pick-panel" class="pick" hidden>
+          <p>Click the invoice number on this first invoice. mpdf finds the same spot on the others.</p>
+          <div class="pick-stage" id="pick-stage"><div class="spinner"></div></div>
+        </div>
+        <div id="regex-panel" hidden>
+          <label class="field">Regular expression <small>(first group in brackets is the name)</small>
+            <input id="regex" type="text" spellcheck="false" placeholder="Invoice\s*No\.?\s*:?\s*(\S+)">
+          </label>
+        </div>
+      </div>
+
+      <div class="results-head">
+        <h3 id="results-title">Sets</h3>
+        <span class="stat" id="found-stat"></span>
+      </div>
+      <div class="table-wrap">
+        <table class="results">
+          <thead><tr><th>#</th><th>First page</th><th>File name</th><th>Pages</th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- DOWNLOAD -->
+    <section class="dl" id="step-dl" hidden>
+      <div class="progress" id="progress" hidden><div id="progress-bar"></div></div>
+      <button type="button" class="primary" id="download-zip">Download all as ZIP</button>
+      <span class="hint" id="dl-hint"></span>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>mpdf · everything happens in your browser — nothing is uploaded.</span>
+  </footer>
+
+  <script src="vendor/jszip.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
