@@ -206,6 +206,7 @@ const TITLES = {
   invoices: 'mpdf — split invoice bundles into one PDF per invoice',
   split: 'mpdf — split PDF',
   images: 'mpdf — JPG / PNG to PDF',
+  weekly: 'mpdf — weekly pendings report',
 };
 
 function showTool() {

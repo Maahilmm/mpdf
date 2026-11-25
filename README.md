@@ -6,7 +6,9 @@ Free PDF tools that run entirely in the browser — no files are uploaded anywhe
 - **Split PDF** (`#split`) — custom ranges, fixed ranges (every N pages), extract all pages or selected pages; separate files or merged
 - **JPG to PDF** (`#images`) — JPG/PNG/WebP to PDF with reorder, rotate, page size (A4 / Letter / same as image), orientation, margin, merge or one PDF per image. Phone-photo rotation (EXIF) is respected; untouched JPG/PNG files are embedded without re-compressing.
 
-Every tool has a thumbnail grid and a zoomable preview, and accepts files dropped anywhere on the page.
+- **Weekly report** (`#weekly`) — builds the IGMH weekly pendings report from four Excel files (Pending items, Cleared items, Bill Entry, last week's report): the weekly report with real MVR/USD pivot tables, plus the worked Pending and Clearing files. Asks for missing vendor names, exchange rates and Bill Entry gaps before building.
+
+The PDF tools have a thumbnail grid and a zoomable preview, and accepts files dropped anywhere on the page.
 
 ## Invoice sets — how it works
 1. Add PDFs (any of three arrangements):
@@ -33,6 +35,6 @@ python3 -m http.server 8000
 ```
 then open http://localhost:8000
 
-Code: `js/shared.js` (viewer, downloads, tabs), `js/core.js` (pure logic, tested in Node), `js/app.js` / `js/split.js` / `js/images.js` (one per tool).
+Code: `js/shared.js` (viewer, downloads, tabs), `js/core.js` (pure logic, tested in Node), `js/app.js` / `js/split.js` / `js/images.js` / `js/weekly.js` (one per tool). The weekly report's Excel reading and writing (including the pivot tables) is in `js/weekly-core.js`.
 
 Libraries (bundled in `vendor/`): pdf-lib 1.17.1, pdf.js 6.2, JSZip 3.10.

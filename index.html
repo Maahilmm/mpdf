@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>mpdf — split invoice bundles into one PDF per invoice</title>
-  <meta name="description" content="Free PDF tools that run in your browser: split invoice bundles into one PDF per invoice, split PDFs, and convert JPG/PNG to PDF. Nothing is uploaded.">
+  <meta name="description" content="Free tools that run in your browser: split invoice bundles into one PDF per invoice, split PDFs, convert JPG/PNG to PDF, and build the weekly pendings report. Nothing is uploaded.">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="css/style.css">
 </head>
@@ -15,6 +15,7 @@
       <a href="#invoices" data-tab="invoices">Invoice sets</a>
       <a href="#split" data-tab="split">Split PDF</a>
       <a href="#images" data-tab="images">JPG to PDF</a>
+      <a href="#weekly" data-tab="weekly">Weekly report</a>
     </nav>
     <span class="privacy"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Z"/></svg>Files never leave your device</span>
   </header>
@@ -269,6 +270,54 @@
       <span class="hint" id="im-dl-hint"></span>
     </section>
    </div>
+
+   <div data-tool-panel="weekly" hidden>
+    <section class="hero">
+      <h1>Four files in.<br><em>Weekly report</em> out.</h1>
+      <p>Drop in the Pending items, Cleared items, Bill Entry and last week's report. You get back the weekly pendings report, plus the worked Pending and Clearing files, with real pivot tables.</p>
+    </section>
+
+    <section class="step">
+      <div class="step-head"><span class="num">1</span><h2>Add the four files</h2></div>
+      <label class="drop" id="wk-drop">
+        <input type="file" id="wk-input" accept=".xlsx,.xlsm" multiple hidden>
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M14 6h14l10 10v26H14z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><path d="M28 6v10h10M26 24v12m-5-5 5 5 5-5" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <strong>Drop the Excel files here</strong>
+        <span>All four at once is fine, each one is recognised automatically · or click a slot below to pick one</span>
+      </label>
+      <div class="wk-tray" id="wk-tray"></div>
+      <div class="wk-form">
+        <label class="wk-fld">Report period ends (the Wednesday)<input type="date" id="wk-end"></label>
+        <label class="wk-fld">Period<input id="wk-span" readonly tabindex="-1"></label>
+        <label class="wk-fld">Ahmed Shafeeq USD → MVR rate<input id="wk-arate" inputmode="decimal"></label>
+        <label class="wk-fld">His account<input id="wk-aacct"></label>
+        <label class="wk-fld wk-wide">Leave out of Weekly Clear when Text contains<input id="wk-excl"></label>
+      </div>
+      <div class="wk-actions"><button type="button" class="primary" id="wk-check" disabled>Check files</button></div>
+      <div id="wk-m1"></div>
+    </section>
+
+    <section class="step" id="wk-s2" hidden>
+      <div class="step-head"><span class="num">2</span><h2>Needs your input</h2></div>
+      <p class="hint" id="wk-s2hint"></p>
+      <div id="wk-issues"></div>
+    </section>
+
+    <section class="step" id="wk-s3" hidden>
+      <div class="step-head"><span class="num">3</span><h2>Build the report</h2></div>
+      <div class="wk-form">
+        <label class="wk-fld wk-wide">Report file name<input id="wk-fname"></label>
+      </div>
+      <div class="wk-actions"><button type="button" class="primary" id="wk-build">Build report</button></div>
+      <div id="wk-m3"></div>
+      <div id="wk-result" hidden>
+        <div class="wk-figs" id="wk-figs"></div>
+        <div class="wk-stats" id="wk-stats"></div>
+        <div class="results-head"><h3>Your files</h3><button type="button" class="ghost" id="wk-zip">Download all as ZIP</button></div>
+        <div class="wk-dls" id="wk-dls"></div>
+      </div>
+    </section>
+   </div>
   </main>
 
   <div class="viewer" id="viewer" hidden role="dialog" aria-modal="true" aria-labelledby="viewer-title">
@@ -289,6 +338,7 @@
   </footer>
 
   <script src="vendor/jszip.min.js"></script>
+  <script src="js/weekly-core.js"></script>
   <script type="module" src="js/main.js"></script>
 </body>
 </html>
