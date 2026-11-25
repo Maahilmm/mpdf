@@ -64,6 +64,7 @@ $('#wk-tray').addEventListener('drop', (e) => {
   addFiles([...e.dataTransfer.files], s.dataset.k);
 });
 
+try { localStorage.removeItem('wr.rates'); } catch { /* ignore */ }
 $('#wk-end').value = isoD(WR.defaultPeriodEnd(today));
 $('#wk-arate').value = store.get('ahmedRate', '15.42');
 $('#wk-aacct').value = store.get('ahmedAcct', 'A060835');
@@ -102,7 +103,7 @@ const cell = (v) => (v instanceof Date ? dmy(v) : typeof v === 'number' ? (Numbe
 const table = (head, rows) => `<div class="table-wrap wk-table"><table class="results"><thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
 
 function renderIssues() {
-  const I = an.issues, st = an.stats, savedV = store.get('vendorNames', {}), savedR = store.get('rates', {});
+  const I = an.issues, st = an.stats, savedV = store.get('vendorNames', {});
   let h = `<div class="wk-stats"><span><b>${st.openItems}</b> pending items (${st.openDropped} subtotal rows dropped)</span><span><b>${st.clearedItems}</b> cleared items, <b>${st.clearedExcluded}</b> payroll, salary or dividend setoff lines left out</span><span><b>${st.keptBills}</b> Bill Entry pendings kept, <b>${st.excludedBills}</b> received on or after the period end left out</span></div>`;
   const ex = an.data.cleared.excluded;
   if (ex.length) {
@@ -121,10 +122,9 @@ function renderIssues() {
       table(['Account', 'Found in', 'Lines', 'Vendor name'], I.vendors.map((v) => `<tr><td>${esc(v.acct)}</td><td>${esc(v.sources.join(', '))}</td><td class="wk-num">${v.count}</td><td><input class="wk-in" data-vend="${esc(v.acct)}" value="${esc(savedV[v.acct] || '')}" placeholder="Vendor name"></td></tr>`).join('')) + '</div>';
   }
   if (I.currencies.length) {
-    h += `<div class="wk-box"><h3>Exchange rates to USD</h3><p class="hint">Use today's MMA cross rate, in units of the currency per 1 USD, from <a href="https://mma.gov.mv/#/statistics/exchangerates" target="_blank" rel="noopener">mma.gov.mv → Exchange Rates → Cross Rates</a>. For a currency MMA doesn't list, type the rate you want to use.</p>` +
+    h += `<div class="wk-box"><h3>Exchange rates to USD</h3><p class="hint">Enter today's MMA cross rate (rates change daily, so they're never remembered), in units of the currency per 1 USD, from <a href="https://mma.gov.mv/#/statistics/exchangerates" target="_blank" rel="noopener">mma.gov.mv → Exchange Rates → Cross Rates</a>. For a currency MMA doesn't list, type the rate you want to use.</p>` +
       table(['Currency', 'Found in', 'Units per USD', ''], I.currencies.map((c) => {
-        const s = savedR[c.code];
-        return `<tr><td><b>${esc(c.code)}</b></td><td>${esc(c.sources.join(', '))}</td><td><input class="wk-in" data-rate="${esc(c.code)}" inputmode="decimal" value="${s ? esc(s.v) : ''}" placeholder="e.g. 0.9165"></td><td>${MMA.includes(c.code) ? '' : '<span class="wk-pill bad">Not on MMA, enter your own</span>'}${s ? ` <span class="wk-pill">last used ${esc(s.d)}, check it</span>` : ''}</td></tr>`;
+        return `<tr><td><b>${esc(c.code)}</b></td><td>${esc(c.sources.join(', '))}</td><td><input class="wk-in" data-rate="${esc(c.code)}" inputmode="decimal" value="" placeholder="e.g. 0.9165" autocomplete="off"></td><td>${MMA.includes(c.code) ? '' : '<span class="wk-pill bad">Not on MMA, enter your own</span>'}</td></tr>`;
       }).join('')) + '</div>';
   }
   if (I.bills.length) {
@@ -169,7 +169,6 @@ $('#wk-build').addEventListener('click', async () => {
     if (b.received < periodEnd()) extra.push(b);
   });
   const vSave = store.get('vendorNames', {}); Object.assign(vSave, a.vendorNames); store.set('vendorNames', vSave);
-  const rSave = store.get('rates', {}); for (const k in a.rates) rSave[k] = { v: a.rates[k], d: dmy(today) }; store.set('rates', rSave);
   const btn = $('#wk-build'); btn.disabled = true; btn.textContent = 'Building…'; showMsg('#wk-m3', '');
   try {
     const kept = an.data.keptBills;
