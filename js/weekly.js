@@ -122,9 +122,9 @@ function renderIssues() {
       table(['Account', 'Found in', 'Lines', 'Vendor name'], I.vendors.map((v) => `<tr><td>${esc(v.acct)}</td><td>${esc(v.sources.join(', '))}</td><td class="wk-num">${v.count}</td><td><input class="wk-in" data-vend="${esc(v.acct)}" value="${esc(savedV[v.acct] || '')}" placeholder="Vendor name"></td></tr>`).join('')) + '</div>';
   }
   if (I.currencies.length) {
-    h += `<div class="wk-box"><h3>Exchange rates to USD</h3><p class="hint">Enter today's MMA cross rate (rates change daily, so they're never remembered), in units of the currency per 1 USD, from <a href="https://mma.gov.mv/#/statistics/exchangerates" target="_blank" rel="noopener">mma.gov.mv → Exchange Rates → Cross Rates</a>. For a currency MMA doesn't list, type the rate you want to use.</p>` +
-      table(['Currency', 'Found in', 'Units per USD', ''], I.currencies.map((c) => {
-        return `<tr><td><b>${esc(c.code)}</b></td><td>${esc(c.sources.join(', '))}</td><td><input class="wk-in" data-rate="${esc(c.code)}" inputmode="decimal" value="" placeholder="e.g. 0.9165" autocomplete="off"></td><td>${MMA.includes(c.code) ? '' : '<span class="wk-pill bad">Not on MMA, enter your own</span>'}</td></tr>`;
+    h += `<div class="wk-box"><h3>Exchange rates to USD</h3><p class="hint">These foreign currencies were found in this week's files. For each one, type how much of it equals 1 USD, using today's cross rate from <a href="https://mma.gov.mv/#/statistics/exchangerates" target="_blank" rel="noopener">mma.gov.mv → Exchange Rates → Cross Rates</a>. Rates change daily, so they're never remembered.</p>` +
+      table(['Currency', 'Found in', 'Exchange rate', ''], I.currencies.map((c) => {
+        return `<tr><td><b>${esc(c.code)}</b></td><td>${esc(c.sources.join(', '))}</td><td><span class="wk-rate">1 USD = <input class="wk-in wk-rin" data-rate="${esc(c.code)}" inputmode="decimal" value="" placeholder="x" autocomplete="off" aria-label="1 USD in ${esc(c.code)}"> ${esc(c.code)}</span></td><td>${MMA.includes(c.code) ? '' : '<span class="wk-pill bad">Not on MMA, enter your own</span>'}</td></tr>`;
       }).join('')) + '</div>';
   }
   if (I.bills.length) {
@@ -151,7 +151,7 @@ function renderIssues() {
 function collect() {
   const a = { vendorNames: {}, rates: {}, bills: {} }, missing = [];
   $$('[data-vend]').forEach((i) => { const v = i.value.trim(); i.classList.toggle('need', !v); if (v) a.vendorNames[i.dataset.vend] = v; else missing.push('vendor name for account ' + i.dataset.vend); });
-  $$('[data-rate]').forEach((i) => { const v = parseFloat(i.value); i.classList.toggle('need', !(v > 0)); if (v > 0) a.rates[i.dataset.rate] = v; else missing.push('rate for ' + i.dataset.rate); });
+  $$('[data-rate]').forEach((i) => { const v = parseFloat(i.value); i.classList.toggle('need', !(v > 0)); if (v > 0) a.rates[i.dataset.rate] = v; else missing.push('rate for ' + i.dataset.rate + ' (1 USD = ? ' + i.dataset.rate + ')'); });
   $$('[data-bv]').forEach((i) => { const v = i.value.trim(); i.classList.toggle('need', !v); (a.bills[i.dataset.bv] ||= {}).vendor = v; if (!v) missing.push('vendor for Bill Entry row ' + i.dataset.bv); });
   $$('[data-bs]').forEach((i) => { const v = i.value; i.classList.toggle('need', !v); (a.bills[i.dataset.bs] ||= {}).status = v; if (!v) missing.push('Bill Sent To for row ' + i.dataset.bs); });
   return { a, missing };
