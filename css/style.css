@@ -257,3 +257,54 @@ body.file-over .file-grid { background: #fff8f6; border-radius: 10px; }
 .ipage { position: relative; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.18); overflow: hidden; }
 .ipage canvas { position: absolute; display: block; }
 .primary:disabled:not([data-busy]) { cursor: not-allowed; }
+
+/* ---------- Weekly report ---------- */
+.wk-tray { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.wk-slot { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-height: 112px; padding: 14px; text-align: left; background: #fbfaf7; border: 1.5px dashed #cfc9bc; border-radius: 12px; cursor: pointer; transition: border-color .15s; }
+.wk-slot:hover { border-color: var(--ink); }
+.wk-slot b { font-size: 15px; }
+.wk-slot .f { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.wk-slot .st { margin-top: auto; font-size: 13px; font-weight: 700; color: var(--muted); }
+.wk-slot.done { border-style: solid; border-color: var(--ok); background: #fff; }
+.wk-slot.done .st { color: var(--ok); }
+.wk-slot.err { border-style: solid; border-color: var(--accent); }
+.wk-slot.err .st { color: var(--accent); }
+.wk-form { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 20px; }
+.wk-fld { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.wk-fld input { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 15px; color: var(--ink); background: #fff; min-height: 44px; }
+.wk-fld input:focus, .wk-in:focus { outline: 2px solid var(--accent); border-color: transparent; }
+.wk-fld input[readonly] { background: #fbfaf7; color: var(--muted); min-width: 290px; }
+.wk-fld #wk-arate, .wk-fld #wk-aacct { width: 140px; }
+.wk-wide { flex: 1 1 320px; }
+.wk-actions { margin-top: 20px; }
+.wk-note { background: #f3f1ec; border-color: var(--line); color: var(--ink); }
+.wk-bad { background: #fff1ee; border-color: #f4b8ab; color: var(--accent-ink); }
+.wk-stats { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 14px; color: var(--muted); }
+.wk-stats b { color: var(--ink); }
+.wk-box { margin-top: 22px; }
+.wk-box h3 { margin: 0 0 4px; font-size: 16px; }
+.wk-box .hint { margin: 0 0 12px; }
+.wk-box a { color: var(--accent-ink); }
+details.wk-box summary { cursor: pointer; font-weight: 600; margin-bottom: 10px; }
+.wk-table { max-height: 460px; }
+.wk-table td { white-space: nowrap; }
+.wk-num { text-align: right; font-variant-numeric: tabular-nums; }
+.results td.wk-num:first-child { color: var(--ink); }
+.wk-in { min-width: 200px; min-height: 38px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 14px; }
+.wk-in.need { border-color: var(--accent); box-shadow: 0 0 0 2px #fbd9d2; }
+.wk-pill { display: inline-block; padding: 2px 8px; border-radius: 99px; background: var(--paper); color: var(--muted); font-size: 12px; font-weight: 700; }
+.wk-pill.bad { color: var(--accent-ink); background: #fff1ee; }
+.wk-figs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 22px 0 14px; }
+.wk-fig { padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: #fbfaf7; }
+.wk-fig.key { background: var(--ink); border-color: var(--ink); color: #fff; }
+.wk-fig .lab { font-size: 13px; font-weight: 700; opacity: .7; }
+.wk-fig .big { font-size: clamp(24px, 3.4vw, 34px); font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.wk-fig .chg { margin-top: 4px; font-size: 14px; font-weight: 600; opacity: .85; }
+#wk-result .results-head { margin-top: 24px; }
+.wk-dls { display: grid; gap: 10px; }
+.wk-dl { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fbfaf7; }
+.wk-dl b { display: block; overflow-wrap: anywhere; }
+.wk-dl span { font-size: 13px; color: var(--muted); }
+.wk-dl .ghost { padding: 9px 18px; font-weight: 600; }
+@media (max-width: 860px) { .wk-tray { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .wk-tray, .wk-figs { grid-template-columns: minmax(0, 1fr); } .wk-fld input[readonly] { min-width: 0; width: 100%; } .wk-fld { flex: 1 1 100%; } }

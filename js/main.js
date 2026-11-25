@@ -3,3 +3,4 @@ import './shared.js';
 import './app.js';
 import './split.js';
 import './images.js';
+import './weekly.js';
